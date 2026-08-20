@@ -1,0 +1,408 @@
+openapi: 3.0.3
+
+info:
+    title: E-commerce Auth Service
+    description: API xác thực và quản lý phiên đăng nhập cho hệ thống E-commerce Microservices.
+    version: 1.0.0
+
+servers:
+    - url: http://localhost:3001
+      description: Local development
+
+tags:
+    - name: Health
+      description: Kiểm tra trạng thái service và kết nối cơ sở dữ liệu.
+    - name: Auth
+      description: Đăng ký, đăng nhập và quản lý phiên xác thực.
+
+paths:
+    /health:
+        get:
+            tags: [Health]
+            summary: Kiểm tra trạng thái service
+            operationId: checkHealth
+            responses:
+                "200":
+                    description: Service hoạt động và kết nối được PostgreSQL.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/HealthResponse"
+                            example:
+                                status: ok
+                                service: auth-service
+                                database: connected
+                "503":
+                    description: Service không kết nối được PostgreSQL.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/HealthResponse"
+                            example:
+                                status: error
+                                service: auth-service
+                                database: disconnected
+
+    /api/v1/auth/register:
+        post:
+            tags: [Auth]
+            summary: Đăng ký người dùng mới
+            operationId: registerUser
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/CredentialsRequest"
+            responses:
+                "201":
+                    description: Đăng ký thành công.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/RegisterResponse"
+                "400":
+                    description: Thiếu dữ liệu hoặc mật khẩu ngắn hơn 8 ký tự.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                            example:
+                                message: Password must be at least 8 characters
+                "409":
+                    description: Email đã tồn tại.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                            example:
+                                message: Email already exists
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    /api/v1/auth/login:
+        post:
+            tags: [Auth]
+            summary: Đăng nhập
+            operationId: loginUser
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/CredentialsRequest"
+            responses:
+                "200":
+                    description: Đăng nhập thành công.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/LoginResponse"
+                "400":
+                    description: Thiếu email hoặc mật khẩu.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                "401":
+                    description: Email hoặc mật khẩu không chính xác.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                            example:
+                                message: Invalid email or password
+                "403":
+                    $ref: "#/components/responses/InactiveUser"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    /api/v1/auth/refresh:
+        post:
+            tags: [Auth]
+            summary: Làm mới token
+            description: Thu hồi refresh token hiện tại và trả về một cặp token mới.
+            operationId: refreshAccessToken
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/RefreshTokenRequest"
+            responses:
+                "200":
+                    description: Làm mới token thành công.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/RefreshResponse"
+                "400":
+                    description: Thiếu refresh token.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                            example:
+                                message: Refresh token is required
+                "401":
+                    description: Refresh token không hợp lệ, hết hạn, bị thu hồi hoặc không còn session.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                            example:
+                                message: Invalid or expired refresh token
+                "403":
+                    $ref: "#/components/responses/InactiveUser"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    /api/v1/auth/logout:
+        post:
+            tags: [Auth]
+            summary: Đăng xuất một phiên
+            description: Thu hồi session tương ứng với refresh token được cung cấp.
+            operationId: logoutUser
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/RefreshTokenRequest"
+            responses:
+                "200":
+                    description: Đăng xuất thành công.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/MessageResponse"
+                            example:
+                                message: Logout successful
+                "400":
+                    description: Thiếu refresh token.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                "401":
+                    description: Refresh token không hợp lệ.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    /api/v1/auth/logout-all:
+        post:
+            tags: [Auth]
+            summary: Đăng xuất khỏi tất cả thiết bị
+            description: Thu hồi toàn bộ refresh session đang hoạt động của người dùng hiện tại.
+            operationId: logoutAllSessions
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: Tất cả refresh session đã được thu hồi.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/MessageResponse"
+                            example:
+                                message: Logged out from all devices successfully
+                "401":
+                    $ref: "#/components/responses/Unauthorized"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    /api/v1/auth/me:
+        get:
+            tags: [Auth]
+            summary: Lấy thông tin người dùng hiện tại
+            operationId: getCurrentUser
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: Thông tin người dùng hiện tại.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/CurrentUserResponse"
+                "401":
+                    $ref: "#/components/responses/Unauthorized"
+                "403":
+                    $ref: "#/components/responses/InactiveUser"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+components:
+    securitySchemes:
+        bearerAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: JWT
+            description: Access token nhận được sau khi đăng nhập hoặc làm mới token.
+
+    schemas:
+        CredentialsRequest:
+            type: object
+            required: [email, password]
+            properties:
+                email:
+                    type: string
+                    format: email
+                    example: user@example.com
+                password:
+                    type: string
+                    format: password
+                    minLength: 8
+                    example: password123
+
+        RefreshTokenRequest:
+            type: object
+            required: [refreshToken]
+            properties:
+                refreshToken:
+                    type: string
+                    description: JWT refresh token nhận được từ API đăng nhập hoặc làm mới token.
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+        User:
+            type: object
+            required: [id, email, is_active, created_at]
+            properties:
+                id:
+                    type: string
+                    description: PostgreSQL BIGINT được trả về dưới dạng chuỗi.
+                    example: "1"
+                email:
+                    type: string
+                    format: email
+                    example: user@example.com
+                is_active:
+                    type: boolean
+                    example: true
+                created_at:
+                    type: string
+                    format: date-time
+                    example: "2026-08-20T00:00:00.000Z"
+                updated_at:
+                    type: string
+                    format: date-time
+                    example: "2026-08-20T00:00:00.000Z"
+
+        TokenData:
+            type: object
+            required: [accessToken, refreshToken, tokenType, accessTokenExpiresIn, refreshTokenExpiresIn]
+            properties:
+                accessToken:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                refreshToken:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                tokenType:
+                    type: string
+                    enum: [Bearer]
+                accessTokenExpiresIn:
+                    type: string
+                    example: 15m
+                refreshTokenExpiresIn:
+                    type: string
+                    example: 30d
+
+        RegisterResponse:
+            type: object
+            required: [message, data]
+            properties:
+                message:
+                    type: string
+                    example: User registered successfully
+                data:
+                    $ref: "#/components/schemas/User"
+
+        LoginResponse:
+            type: object
+            required: [message, data]
+            properties:
+                message:
+                    type: string
+                    example: Login successful
+                data:
+                    $ref: "#/components/schemas/TokenData"
+
+        RefreshResponse:
+            type: object
+            required: [message, data]
+            properties:
+                message:
+                    type: string
+                    example: Access token refreshed
+                data:
+                    $ref: "#/components/schemas/TokenData"
+
+        CurrentUserResponse:
+            type: object
+            required: [data]
+            properties:
+                data:
+                    $ref: "#/components/schemas/User"
+
+        MessageResponse:
+            type: object
+            required: [message]
+            properties:
+                message:
+                    type: string
+                    example: Operation completed successfully
+
+        ErrorResponse:
+            type: object
+            required: [message]
+            properties:
+                message:
+                    type: string
+                    example: Internal server error
+
+        HealthResponse:
+            type: object
+            required: [status, service, database]
+            properties:
+                status:
+                    type: string
+                    enum: [ok, error]
+                service:
+                    type: string
+                    enum: [auth-service]
+                database:
+                    type: string
+                    enum: [connected, disconnected]
+
+    responses:
+        Unauthorized:
+            description: Thiếu access token, sai định dạng Bearer, token không hợp lệ hoặc hết hạn.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    example:
+                        message: Invalid or expired access token
+
+        InactiveUser:
+            description: Tài khoản đã bị vô hiệu hóa.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    example:
+                        message: User is inactive
+
+        InternalServerError:
+            description: Lỗi nội bộ service.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    example:
+                        message: Internal server error
