@@ -1,0 +1,150 @@
+openapi: 3.0.3
+info:
+    title: E-commerce Order Service
+    description: Checkout, tra cứu và hủy order với inventory reservation idempotent.
+    version: 1.0.0
+servers:
+    - url: http://localhost:3004
+paths:
+    /health:
+        get:
+            summary: Health check
+            responses:
+                "200": { description: Service hoạt động }
+                "503": { description: Database không khả dụng }
+    /api/orders:
+        post:
+            summary: Checkout giỏ hàng hiện tại
+            description: |
+                Tạo hoặc tiếp tục checkout Saga theo Idempotency-Key. Retry cùng user
+                và key trả lại cùng order, không reserve stock hoặc consume cart lần hai.
+            security: [{ bearerAuth: [] }]
+            parameters:
+                - in: header
+                  name: Idempotency-Key
+                  required: true
+                  description: Khóa ổn định cho một checkout intent; dùng lại cùng key khi retry.
+                  schema: { type: string, minLength: 8, maxLength: 100 }
+            responses:
+                "201": { description: Order mới đã được tạo }
+                "200": { description: Trả lại order của lần gọi trước }
+                "400": { description: Thiếu hoặc sai Idempotency-Key }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+                "404": { description: Sản phẩm không tồn tại }
+                "409":
+                    {
+                        description: Cart rỗng,
+                        thiếu stock hoặc order đã thất bại,
+                    }
+                "502": { description: Cart/Product service không khả dụng }
+                "504": { description: Dependency timeout }
+        get:
+            summary: Lấy danh sách order
+            description: User chỉ thấy order của mình; admin thấy tất cả.
+            security: [{ bearerAuth: [] }]
+            parameters:
+                - {
+                      in: query,
+                      name: page,
+                      schema: { type: integer, minimum: 1, default: 1 },
+                  }
+                - {
+                      in: query,
+                      name: limit,
+                      schema:
+                          {
+                              type: integer,
+                              minimum: 1,
+                              maximum: 100,
+                              default: 20,
+                          },
+                  }
+            responses:
+                "200": { description: Danh sách order có phân trang }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+    /api/orders/{id}:
+        parameters:
+            - {
+                  in: path,
+                  name: id,
+                  required: true,
+                  schema: { type: string, format: uuid },
+              }
+        get:
+            summary: Lấy chi tiết order
+            security: [{ bearerAuth: [] }]
+            responses:
+                "200": { description: Chi tiết order }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+                "404": { description: Không tìm thấy order hoặc không có quyền }
+    /api/orders/{id}/cancel:
+        parameters:
+            - {
+                  in: path,
+                  name: id,
+                  required: true,
+                  schema: { type: string, format: uuid },
+              }
+        post:
+            summary: Hủy order và hoàn inventory reservation
+            description: Chuyển order sang CANCEL_PENDING trước khi gọi Product release; có thể retry an toàn.
+            security: [{ bearerAuth: [] }]
+            responses:
+                "200": { description: Order đã hủy }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+                "404": { description: Không tìm thấy order hoặc inventory reservation }
+                "409": { description: Trạng thái order không thể hủy }
+                "502": { description: Product service không khả dụng }
+                "504": { description: Product service phản hồi quá thời gian }
+components:
+    securitySchemes:
+        bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    responses:
+        Unauthorized:
+            description: Thiếu hoặc sai access token
+            content:
+                application/json:
+                    schema: { $ref: "#/components/schemas/Error" }
+    schemas:
+        OrderStatus:
+            type: string
+            description: Trạng thái hiện tại của checkout/cancellation Saga.
+            enum: [PENDING, PENDING_PAYMENT, CANCEL_PENDING, CANCELLED, FAILED]
+        RequestedItem:
+            type: object
+            properties:
+                productId: { type: integer }
+                quantity: { type: integer }
+        OrderItem:
+            type: object
+            properties:
+                product_id: { type: string }
+                product_name: { type: string }
+                unit_price: { type: string }
+                quantity: { type: integer }
+                subtotal: { type: string }
+        Order:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                user_id: { type: string }
+                idempotency_key: { type: string }
+                status: { $ref: "#/components/schemas/OrderStatus" }
+                request_items:
+                    type: array
+                    items: { $ref: "#/components/schemas/RequestedItem" }
+                reservation_id: { type: string, format: uuid, nullable: true }
+                total_amount: { type: string, nullable: true }
+                cart_consumed: { type: boolean }
+                failure_reason: { type: string, nullable: true }
+                items:
+                    {
+                        type: array,
+                        items: { $ref: "#/components/schemas/OrderItem" },
+                    }
+                created_at: { type: string, format: date-time }
+                updated_at: { type: string, format: date-time }
+        Error:
+            type: object
+            properties:
+                message: { type: string }
