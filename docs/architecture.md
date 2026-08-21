@@ -1,112 +1,185 @@
 # Architecture
 
-Tài liệu này mô tả kiến trúc mục tiêu. Việc triển khai thực tế được chia nhỏ trong [Roadmap](roadmap.md).
+Tài liệu này tách rõ hai phạm vi:
 
-## Service boundaries
+- **Current local implementation**: code đang có trong Auth, Product, Cart và Order.
+- **AWS target**: hướng triển khai sau khi local integration, recovery và concurrency đã được kiểm chứng.
 
-Mỗi service sở hữu dữ liệu của mình. Có thể dùng chung một RDS instance để tiết kiệm chi phí học tập, nhưng Auth, User, Cart và Order phải dùng database/schema riêng; service không truy vấn trực tiếp bảng do service khác sở hữu.
+Payment, Notification, Service Connect, Transactional Outbox, SQS và structured logging chưa được coi là đã triển khai nếu source code hiện chưa có chúng.
 
-### Auth service
+## Current local implementation
 
-- API: `POST /api/auth/register`, `/login`, `/refresh`, `/logout`.
-- Lưu user credentials và auth sessions trong PostgreSQL.
-- Chạy trên ECS Fargate; dùng Secrets Manager cho database credentials và JWT secret.
+### Data ownership
 
-### User service
+Mỗi service sở hữu database PostgreSQL riêng. Có thể dùng chung một PostgreSQL instance khi development, nhưng không service nào được truy vấn trực tiếp bảng của service khác.
 
-- API: `GET|PATCH /api/users/me`, `GET|POST /api/users/me/addresses`.
-- Lưu profile, address, preferences và `avatar_key` trong PostgreSQL.
-- Cấp presigned URL để browser upload avatar trực tiếp lên S3.
+| Service | Dữ liệu sở hữu | Trách nhiệm |
+| --- | --- | --- |
+| Auth | `users`, `refresh_sessions` | Credentials, refresh-token rotation, JWT, role |
+| Product | `categories`, `products`, `audit_logs`, `inventory_reservations`, `inventory_reservation_items` | Catalog, price, stock, reservation và audit |
+| Cart | `carts`, `cart_items`, `cart_consumptions` | Cart theo user và idempotent consume sau checkout |
+| Order | `orders`, `order_items` | Checkout state machine, price snapshot, cancel/compensation |
 
-### Product service
+Product dùng PostgreSQL trong implementation hiện tại. Inventory consistency dựa vào `SELECT ... FOR UPDATE`, advisory lock theo `order_id` và atomic conditional update; chuyển Product sang DynamoDB sẽ là một redesign riêng, không phải chỉ thay cấu hình deployment.
 
-- API: `GET|POST /api/products`, `GET|PATCH|DELETE /api/products/:id`.
-- Lưu product, category và inventory trong DynamoDB để thực hành partition key, sort key, query và GSI.
-- Xác định access patterns và key design trước khi tạo table.
+### Public API và authorization
 
-### Cart service
+| Service | Public route | Quyền |
+| --- | --- | --- |
+| Auth | `/api/v1/auth/*` | Public cho register/login/refresh; JWT cho endpoint protected |
+| Product | `/api/categories/*`, `/api/products/*` | Read public; ghi yêu cầu JWT role `admin` |
+| Cart | `/api/cart/*` | JWT; chỉ thao tác cart của `sub` trong token |
+| Order | `/api/orders/*` | JWT; owner xem/hủy order của mình, admin xem tất cả |
 
-- API: `GET|DELETE /api/cart`, `POST /api/cart/items`, `PATCH|DELETE /api/cart/items/:productId`.
-- Lưu cart và cart item theo user trong PostgreSQL; không tạo foreign key sang dữ liệu của Auth/Product.
-- Gọi Product đồng bộ để kiểm tra tồn tại và stock; giá trong cart chỉ mang tính tham khảo.
+Cả bốn service có `GET /health` kiểm tra database và `/api-docs` phục vụ Swagger UI.
 
-### Order service
+### Internal API
 
-- API: `POST /api/orders`, `GET /api/orders`, `GET /api/orders/:id`.
-- Gọi Product đồng bộ để kiểm tra sản phẩm, lưu order trong PostgreSQL, rồi publish payment request vào SQS.
-- Cần timeout và error mapping rõ ràng để tránh cascading failure.
+| Caller | Callee | Endpoint | Mục đích |
+| --- | --- | --- | --- |
+| Order | Product | `POST /internal/inventory/reservations` | Reserve và khấu trừ stock |
+| Order | Product | `POST /internal/inventory/reservations/:orderId/release` | Hoàn stock khi cancel |
+| Order | Cart | `POST /internal/cart/consume` | Giảm/xóa quantity đã checkout |
 
-### Payment và Notification
+Hiện Order, Product và Cart dùng chung `INTERNAL_API_KEY` truyền trong header `x-internal-api-key`; Product/Cart so sánh constant-time. Đây chỉ là application-level guard cho local development: các service đều lắng nghe trên `0.0.0.0` và chưa có reverse proxy, security group hoặc listener riêng để tách `/internal/*` khỏi public route. Vì vậy, bất kỳ client nào chạm được Product/Cart port vẫn có thể thử gọi internal endpoint; key không được gửi cho frontend và các port này không được expose ra Internet.
 
-- Payment là ECS worker, không public qua ALB; consume `payment-queue`, xử lý idempotent rồi publish sang `notification-queue`.
-- Notification là Lambda được trigger từ queue; thực hành event source mapping, retry, execution role và CloudWatch Logs.
+Trong production, internal endpoint không có ALB rule public. Secret phải được inject từ Secrets Manager; Order gọi Product/Cart qua private network/TLS và có thể tách credential theo dependency để giảm blast radius.
 
-## Request routing
+## Checkout consistency
 
-ALB internet-facing nằm trong ít nhất hai public subnets. Mỗi public service có target group và health check `GET /health` riêng:
+### End-to-end flow
 
-| Path pattern | Target group |
+```text
+Client
+  │ JWT + Idempotency-Key
+  ▼
+Order
+  ├── GET Cart bằng JWT của user
+  ├── INSERT orders(PENDING, request_items)
+  ├── POST Product reserve(orderId, items)
+  │       └── Product transaction: lock → validate → reservation → decrement stock
+  ├── Order transaction: snapshot reservation → PENDING_PAYMENT
+  ├── POST Cart consume(orderId, items)
+  │       └── Cart transaction: idempotency record → lock cart → reduce/delete items
+  └── UPDATE orders.cart_consumed = true
+```
+
+Cart price/stock chỉ là tham khảo. Product là authority cuối cùng của stock; Order lưu product name/price từ Product reservation để order history không thay đổi khi catalog được cập nhật sau đó.
+
+### Hai state machine khác nhau
+
+```text
+Order
+NEW → PENDING → PENDING_PAYMENT → CANCEL_PENDING → CANCELLED
+             └───────────────→ FAILED
+
+Product reservation
+RESERVED → RELEASED
+```
+
+`PENDING_PAYMENT` nghĩa là inventory đã reserve và order snapshot đã lưu, chưa phải payment thành công. `RESERVED`/`RELEASED` chỉ là state của reservation Product.
+
+### Idempotency propagation
+
+```text
+Client Idempotency-Key
+  └── UNIQUE(user_id, idempotency_key) → Order UUID
+                                            ├── Product reservation.order_id
+                                            └── Cart consumption.order_id
+```
+
+- Same client key của cùng user luôn trở lại cùng Order UUID.
+- Product chỉ reserve/trừ stock một lần cho một `order_id`.
+- Cart chỉ consume một lần cho một `order_id`.
+- Retry sau timeout có thể lặp HTTP request nhưng không lặp business effect.
+
+Đây là *at-most-once effect* theo từng local database operation, không phải distributed ACID transaction xuyên ba database.
+
+### Transaction boundary và concurrency
+
+```text
+Order DB:   create/finalize/cancel state trong local transaction
+Product DB: reservation + stock update trong local transaction
+Cart DB:    consumption record + cart mutation trong local transaction
+```
+
+Product khóa product row theo product ID tăng dần, kiểm tra stock và thực hiện conditional update `WHERE stock >= quantity`. Các checkout cạnh tranh cùng product được tuần tự hóa bởi database; request đến sau đọc stock sau commit và nhận `409` khi không đủ hàng.
+
+Order không đọc lại Cart sau khi đã tạo `PENDING`; retry dùng `request_items` đã lưu. Cart consume chỉ xóa đúng quantity trong snapshot, không xóa toàn bộ cart để giữ lại item user thêm hoặc không chọn checkout.
+
+### Failure behavior
+
+| Sự kiện | State sau cùng | Cách tiếp tục |
+| --- | --- | --- |
+| Cart rỗng | Chưa tạo Order | Client tạo checkout mới sau khi cập nhật cart |
+| Product thiếu stock/sản phẩm không tồn tại | `FAILED` | Không retry cùng intent; user sửa cart |
+| Product timeout/unavailable | `PENDING` | Retry cùng `Idempotency-Key` |
+| Product đã commit nhưng response mất | `PENDING` | Retry lấy reservation cũ |
+| Cart consume lỗi | `PENDING_PAYMENT`, `cart_consumed=false` | Retry cùng key, chỉ consume Cart |
+| Cancel không gọi được Product | `CANCEL_PENDING` | Retry cancel để release stock |
+
+Xem [Checkout consistency](checkout-consistency.md) để biết chi tiết recovery, invariants và kịch bản test.
+
+## Current limitations
+
+- Chưa có Payment, `PAID`/`COMPLETED` state hoặc payment event.
+- Chưa có worker tự release reservation hết `expires_at`.
+- Chưa có background reconciliation/retry cho `PENDING`, `CANCEL_PENDING` hoặc `cart_consumed=false`.
+- Cancel không restore item vào Cart.
+- Chưa có Transactional Outbox hay event bus.
+- `INTERNAL_API_KEY` hiện là shared secret, không phải service identity đầy đủ.
+- Chưa có full integration/concurrency suite dùng ba database thật trong CI.
+- Hard-delete Product đã từng có reservation không được hỗ trợ đầy đủ; future catalog lifecycle nên dùng soft delete.
+
+## AWS target
+
+### Network và routing
+
+```text
+Browser ──► CloudFront ──► S3 (frontend, future)
+   │
+   └──────► public ALB ──► ECS public API services
+                                  │
+                                  ├── private PostgreSQL databases
+                                  ├── private service-to-service HTTP
+                                  └── SQS workers (future)
+```
+
+Mục tiêu VPC gồm public subnet cho ALB/NAT Gateway, private app subnet cho ECS và private DB subnet cho RDS. ALB chỉ route public API:
+
+| Path pattern | Target service |
 | --- | --- |
-| `/api/auth/*` | Auth |
-| `/api/users/*` | User |
-| `/api/products/*` | Product |
+| `/api/v1/auth/*` | Auth |
+| `/api/categories/*`, `/api/products/*` | Product |
 | `/api/cart/*` | Cart |
 | `/api/orders/*` | Order |
 
-Health endpoint trả `200` và `{"status":"ok"}` khi process sẵn sàng. Readiness nên phản ánh dependency thiết yếu nhưng tránh biến lỗi tạm thời thành restart loop.
+Internal endpoint không có ALB rule public. Order sẽ gọi Product/Cart qua private DNS, ví dụ ECS Service Connect hoặc Cloud Map. Security group dự kiến chỉ cho phép ALB gọi public service port và chỉ cho Order gọi internal port của Product/Cart.
 
-## Network
+### Storage và secret
 
-```text
-VPC 10.0.0.0/16
-├── Public A       10.0.1.0/24  ┐ ALB, NAT Gateway
-├── Public B       10.0.2.0/24  ┘
-├── Private App A  10.0.11.0/24 ┐ ECS tasks
-├── Private App B  10.0.12.0/24 ┘
-├── Private DB A   10.0.21.0/24 ┐ RDS subnet group
-└── Private DB B   10.0.22.0/24 ┘
-```
+- RDS PostgreSQL: Auth, Product, Cart và Order; mỗi service dùng database/schema riêng.
+- S3/CloudFront: frontend và upload image ở phase sau; database chỉ lưu object key.
+- Secrets Manager: production database credential, JWT secret và internal credential.
+- ECS task role: quyền SDK của application; execution role: pull image, logs và đọc secret được khai báo.
 
-- Public route `0.0.0.0/0` tới Internet Gateway.
-- Private app egress ban đầu qua NAT Gateway; về sau cân nhắc VPC endpoints cho ECR, S3, Logs, Secrets Manager và dịch vụ cần dùng.
-- ALB SG nhận `80/443`; ECS SG chỉ nhận app port từ ALB SG; RDS SG chỉ nhận `5432` từ SG của client hợp lệ.
-- Mục tiêu dùng HTTPS; HTTP-only chỉ phù hợp với phase học tập tạm thời.
+Versioned `.env.development` chỉ có placeholder local. Production secret không được commit, ghi log, bake vào image hoặc nằm plaintext trong task definition.
 
-Traffic nội bộ không đi qua public Internet. Order gọi Product qua private DNS bằng ECS Service Connect hoặc Cloud Map, ví dụ `http://product.internal:3000`.
+### Payment, messaging và Transactional Outbox
 
-## Storage và upload
-
-- PostgreSQL: dữ liệu giao dịch của Auth, User, Cart, Order.
-- DynamoDB: Product theo access patterns đã thiết kế.
-- S3: frontend, avatar, product images; database chỉ lưu object key.
-- CloudFront: phân phối frontend và image từ private S3 origins khi phù hợp.
+Payment/Notification chưa có code. Target flow:
 
 ```text
-Browser ──request URL──► User/Product service
-Browser ◄──presigned URL───────────────┘
-Browser ───────PUT object────────────► S3
+Order state + outbox record --same Order DB transaction--> outbox publisher
+    → payment-queue → Payment worker → notification-queue → Notification Lambda
 ```
 
-Backend validate content type, size, key prefix và quyền user trước khi cấp URL.
+Transactional Outbox đảm bảo **business state và outbox record** cùng commit trong một Order DB transaction. Publish đến SQS diễn ra bất đồng bộ, vì vậy consumer vẫn phải idempotent và queue cần visibility timeout, retry/DLQ phù hợp.
 
-## Messaging và consistency
+## Deployment order
 
-```text
-Order ──► payment-queue ──► Payment worker
-               └── failures after maxReceiveCount ──► payment-dlq
-Payment ──► notification-queue ──► Lambda
-```
-
-Visibility timeout phải dài hơn thời gian xử lý dự kiến. Consumer lưu idempotency key (ví dụ `paymentId`) vì SQS standard queue có at-least-once delivery. Triển khai production-like cần giải quyết tính nguyên tử giữa ghi state và publish event, ví dụ transactional outbox.
-
-## IAM và deployment
-
-- Task execution role: ECS agent pull ECR image, gửi logs và lấy secret khai báo trong task definition.
-- Task role: quyền AWS SDK của application với DynamoDB, SQS hoặc S3.
-- Lambda execution role: quyền đọc SQS, ghi logs và gọi dependency cần thiết.
-- Không đặt long-lived access keys trong container; áp dụng least privilege theo service.
-
-```text
-Source → tests → Docker image → ECR → task definition revision
-       → ECS rolling deployment → health checks → traffic
-```
+1. Hoàn tất local integration/concurrency/recovery test.
+2. Containerize đủ service và có Compose hoặc tương đương cho local.
+3. Tạo VPC, RDS/secret, ECR, ECS và ALB theo từng service.
+4. Chuyển internal HTTP sang private DNS/TLS và secret production.
+5. Thêm Payment, Outbox, SQS, Notification và observability.

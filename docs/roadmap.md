@@ -1,83 +1,91 @@
 # Deployment roadmap
 
-Mỗi phase phải có đầu ra kiểm chứng được. Không tạo toàn bộ AWS resources ngay từ đầu.
+Mỗi phase có đầu ra kiểm chứng được. Trạng thái “đã có source code” không đồng nghĩa với “đã sẵn sàng production” hoặc “đã deploy AWS”.
 
-## Phase 0 — Local application
+## Trạng thái hiện tại
 
-Dựng Auth, Product, Cart và Order service, Dockerfile, health endpoint và Docker Compose. Kiểm tra REST API, container network và service-to-service calls.
+| Hạng mục | Trạng thái | Ghi chú |
+| --- | --- | --- |
+| Auth local | Đã có | JWT, refresh session, role, migration, seed, Swagger |
+| Product local | Đã có | Catalog, audit, PostgreSQL inventory reservation |
+| Cart local | Đã có | User cart và idempotent internal consume |
+| Order local | Đã có | Checkout Saga, cancel compensation, Swagger |
+| Cross-service integration suite | Chưa đủ | Cần test với Auth/Product/Cart/Order và database thật |
+| Docker Compose | Chưa có | Root repository chưa có compose file |
+| Product Dockerfile | Chưa có | Cần bổ sung nếu vẫn chọn containerize local |
+| AWS infrastructure | Chưa bắt đầu | Không có VPC/ECS/RDS/ECR trong repository hiện tại |
+| Payment / Notification | Chưa bắt đầu | Chưa có service, queue hoặc Lambda |
 
-## Phase 1 — AWS network
+## Phase 0 — Local service foundation
 
-Tạo VPC, subnets ở hai Availability Zones, route tables, Internet Gateway và security groups. Giải thích được đường đi ingress/egress trước khi deploy.
+Đã hoàn thành phần code cơ bản:
 
-## Phase 2 — ECR
+- Auth, Product, Cart, Order có migration, health endpoint, OpenAPI/Swagger.
+- Product giữ stock bằng PostgreSQL transaction, row lock và reservation idempotent.
+- Cart consume idempotent theo `order_id`.
+- Order dùng `Idempotency-Key`, trạng thái Saga và compensation khi cancel.
 
-Tạo repository theo service, build/tag/push image và xác minh image digest.
+Việc còn lại trước AWS:
 
-## Phase 3 — ECS
+1. Tạo test end-to-end chạy bốn service với PostgreSQL thật.
+2. Kiểm tra parallel checkout cạnh tranh cùng stock và retry sau timeout.
+3. Kiểm tra recovery cho `PENDING`, `CANCEL_PENDING` và `PENDING_PAYMENT` với `cart_consumed=false`.
+4. Quyết định/bổ sung Docker Compose và Product Dockerfile nếu local container là mục tiêu học tập.
+5. Thiết kế reservation expiry reaper/reconciliation trước khi có Payment.
 
-Deploy Product service đầu tiên lên Fargate. Phân biệt cluster, task definition, task, service, execution role và task role.
+## Phase 1 — Local reliability hardening
 
-## Phase 4 — ALB
+Thêm request/correlation ID, structured logs, contract/integration tests và runbook cho checkout recovery. Không chuyển sang AWS trước khi có bằng chứng rằng retry không làm trừ stock/cart nhiều lần.
 
-Tạo ALB, listener, target group và `/health`; gọi Product API qua DNS của ALB.
+## Phase 2 — AWS network
 
-## Phase 5 — Multiple services
+Tạo VPC, public/private subnet ở hai Availability Zones, route table, Internet Gateway, NAT Gateway và security group. Giải thích được ingress/egress trước khi deploy application.
 
-Deploy Auth, Product, Cart, Order và path-based routing. Đây là milestone public API đầu tiên.
+## Phase 3 — RDS và Secrets Manager
 
-## Phase 6 — Databases
+Tạo RDS PostgreSQL và database/schema riêng cho Auth, Product, Cart, Order. Đưa production database credentials, JWT secret và internal credential vào Secrets Manager; không đưa secret thật vào Git hoặc image.
 
-Tạo PostgreSQL và DynamoDB; kết nối Auth/Cart/Order với PostgreSQL, Product với DynamoDB. Xác minh backup, connectivity và data ownership.
+Product tiếp tục dùng PostgreSQL trong roadmap này. Chuyển sang DynamoDB chỉ được thực hiện sau một thiết kế inventory/concurrency mới và migration rõ ràng.
 
-## Phase 7 — Secrets
+## Phase 4 — ECR và containerization
 
-Đưa database credentials và JWT secret vào Secrets Manager; thu hẹp IAM và bảo đảm secret không xuất hiện trong Git/logs.
+Tạo ECR repository theo service, bổ sung Dockerfile còn thiếu, build/tag image bằng commit SHA và xác minh image digest. Nếu dùng Compose local, dùng cùng image/build context với production khi hợp lý.
 
-## Phase 8 — Private architecture
+## Phase 5 — ECS và ALB
 
-Đưa ECS và RDS vào private subnets; kiểm tra image pull, logs, secrets và outbound access qua NAT/VPC endpoints.
+Deploy từng service lên Fargate. Bắt đầu bằng Product hoặc Auth, sau đó Cart/Order. Tạo target group, health check `/health`, listener rule cho public API và rollback khi deployment không ổn định.
 
-## Phase 9 — User service
+## Phase 6 — Private service communication
 
-Thêm User service và database/schema do service sở hữu.
+Đưa ECS tasks và RDS vào private subnet. Dùng Service Connect/Cloud Map hoặc private DNS cho Order → Product/Cart; internal API không public qua ALB. Cấu hình TLS, security group theo source SG và credential rotation.
 
-## Phase 10 — SQS
+## Phase 7 — Payment, Outbox và SQS
 
-Tạo `payment-queue`, `payment-dlq`, redrive policy và test visibility timeout/retry.
+Thêm `payment-queue`, DLQ, redrive policy và Transactional Outbox tại Order. Payment worker phải xử lý at-least-once delivery idempotently; kiểm tra failure sau khi business state commit nhưng trước/sau publish.
 
-## Phase 11 — Payment worker
+## Phase 8 — Notification
 
-Deploy Payment service; kiểm tra duplicate delivery và idempotency.
+Tạo `notification-queue`, Notification Lambda và event source mapping. Kiểm tra retry, poison message, DLQ, execution role và CloudWatch Logs.
 
-## Phase 12 — Notification
+## Phase 9 — User và media upload
 
-Tạo `notification-queue`, Lambda và event source mapping; kiểm tra retry/error behavior.
+Thêm User service sở hữu profile/address/preferences. Cấp presigned URL để browser upload avatar/product image trực tiếp S3; kiểm tra ownership, key prefix, MIME type, size, CORS và expiry.
 
-## Phase 13 — S3 uploads
+## Phase 10 — Frontend delivery
 
-Implement presigned URL cho avatar/product images; validate type, size, ownership và CORS.
+Build frontend, upload static assets lên private S3 và serve qua CloudFront. Cấu hình SPA fallback, cache-control và invalidation/versioned assets.
 
-## Phase 14–15 — Frontend delivery
+## Phase 11 — Observability, scaling và CI/CD
 
-Build Vue/React, upload static assets lên private S3 và serve qua CloudFront. Cấu hình SPA fallback và cache invalidation hoặc versioned assets.
+Thêm structured logs, metrics, dashboard, alarm, tracing/correlation ID, load test, auto scaling và GitHub Actions OIDC → AWS. Pipeline chạy test, build immutable image, push ECR, deploy task definition revision và rollback khi health check thất bại.
 
-## Phase 16 — Observability
+## Tiêu chí hoàn tất một phase
 
-Thêm structured logs, correlation/request ID, metrics, dashboard, alarms và retention policy.
+Một phase chỉ hoàn tất khi có thể chứng minh:
 
-## Phase 17 — Auto Scaling
-
-Cấu hình min/desired/max tasks và target tracking; load test để quan sát scale-out/scale-in, cooldown và giới hạn downstream.
-
-## Phase 18 — Failure testing
-
-Thử task crash, unhealthy target, unavailable database/Product/Payment, SQS retry và DLQ. Ghi lại expected behavior và recovery steps.
-
-## Phase 19 — CI/CD
-
-GitHub Actions chạy tests, build immutable image tag, push ECR, tạo task definition revision và deploy ECS. Thêm rollback khi deployment không ổn định.
-
-## Tiêu chí hoàn tất phase
-
-Một phase chỉ hoàn tất khi có thể giải thích vấn đề dịch vụ giải quyết, đường đi network/IAM, cách quan sát, chi phí, failure mode và cách khôi phục—not chỉ khi console hiển thị trạng thái xanh.
+- vấn đề mà thành phần giải quyết;
+- đường đi request, network và IAM;
+- data ownership, retry và failure mode;
+- cách quan sát/khôi phục;
+- security/cost trade-off;
+- kết quả test hoặc bằng chứng vận hành tương ứng.
