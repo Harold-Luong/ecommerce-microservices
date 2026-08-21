@@ -5,13 +5,16 @@
     "type": "module",
     "main": "src/server.js",
     "scripts": {
-        "dev": "node --watch src/server.js",
+        "dev": "node --env-file=.env.development --watch src/server.js",
         "start": "node src/server.js",
-        "migrate": "node migrations/scripts/migrate.js"
+        "migrate": "node migrations/scripts/migrate.js",
+        "migrate:dev": "node --env-file=.env.development migrations/scripts/migrate.js",
+        "seed": "node migrations/scripts/seed.js",
+        "seed:dev": "node --env-file=.env.development migrations/scripts/seed.js",
+        "test": "node --test"
     },
     "dependencies": {
         "bcrypt": "^6.0.0",
-        "dotenv": "^17.4.2",
         "express": "^5.2.1",
         "jsonwebtoken": "^9.0.3",
         "pg": "^8.23.0",

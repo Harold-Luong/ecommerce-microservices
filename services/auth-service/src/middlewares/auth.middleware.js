@@ -9,9 +9,9 @@ export function authenticate(req, res, next) {
         });
     }
 
-    const [type, token] = authorization.split(" ");
+    const [type, token, extra] = authorization.trim().split(/\s+/);
 
-    if (type !== "Bearer" || !token) {
+    if (type !== "Bearer" || !token || extra) {
         return res.status(401).json({
             message: "Invalid authorization format",
         });
@@ -22,12 +22,32 @@ export function authenticate(req, res, next) {
 
         req.auth = {
             userId: payload.sub,
+            email: payload.email,
+            role: payload.role || "user",
         };
 
-        next();
+        return next();
     } catch {
         return res.status(401).json({
             message: "Invalid or expired access token",
         });
     }
+}
+
+export function authorize(...allowedRoles) {
+    return (req, res, next) => {
+        if (!req.auth) {
+            return res.status(401).json({
+                message: "Authentication is required",
+            });
+        }
+
+        if (!allowedRoles.includes(req.auth.role)) {
+            return res.status(403).json({
+                message: "You do not have permission to perform this action",
+            });
+        }
+
+        return next();
+    };
 }

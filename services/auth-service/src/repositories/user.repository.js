@@ -3,7 +3,7 @@ import { db } from "../config/database.js";
 export async function findUserByEmail(email) {
     const result = await db.query(
         `
-      SELECT id, email, password_hash, is_active, created_at
+      SELECT id, email, password_hash, role, is_active, created_at
       FROM users
       WHERE email = $1
       LIMIT 1
@@ -20,6 +20,7 @@ export async function findUserById(id) {
       SELECT
         id,
         email,
+        role,
         is_active,
         created_at,
         updated_at
@@ -44,6 +45,7 @@ export async function createUser({ email, passwordHash }) {
       RETURNING
         id,
         email,
+        role,
         is_active,
         created_at
     `,

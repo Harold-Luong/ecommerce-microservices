@@ -14,6 +14,7 @@ export function generateAccessToken(user) {
         {
             sub: String(user.id),
             email: user.email,
+            role: user.role,
         },
         env.jwt.accessSecret,
         {
