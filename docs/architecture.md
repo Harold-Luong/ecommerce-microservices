@@ -4,7 +4,7 @@ Tài liệu này mô tả kiến trúc mục tiêu. Việc triển khai thực t
 
 ## Service boundaries
 
-Mỗi service sở hữu dữ liệu của mình. Có thể dùng chung một RDS instance để tiết kiệm chi phí học tập, nhưng Auth, User và Order phải dùng database/schema riêng; service không truy vấn trực tiếp bảng do service khác sở hữu.
+Mỗi service sở hữu dữ liệu của mình. Có thể dùng chung một RDS instance để tiết kiệm chi phí học tập, nhưng Auth, User, Cart và Order phải dùng database/schema riêng; service không truy vấn trực tiếp bảng do service khác sở hữu.
 
 ### Auth service
 
@@ -23,6 +23,12 @@ Mỗi service sở hữu dữ liệu của mình. Có thể dùng chung một RD
 - API: `GET|POST /api/products`, `GET|PATCH|DELETE /api/products/:id`.
 - Lưu product, category và inventory trong DynamoDB để thực hành partition key, sort key, query và GSI.
 - Xác định access patterns và key design trước khi tạo table.
+
+### Cart service
+
+- API: `GET|DELETE /api/cart`, `POST /api/cart/items`, `PATCH|DELETE /api/cart/items/:productId`.
+- Lưu cart và cart item theo user trong PostgreSQL; không tạo foreign key sang dữ liệu của Auth/Product.
+- Gọi Product đồng bộ để kiểm tra tồn tại và stock; giá trong cart chỉ mang tính tham khảo.
 
 ### Order service
 
@@ -44,6 +50,7 @@ ALB internet-facing nằm trong ít nhất hai public subnets. Mỗi public serv
 | `/api/auth/*` | Auth |
 | `/api/users/*` | User |
 | `/api/products/*` | Product |
+| `/api/cart/*` | Cart |
 | `/api/orders/*` | Order |
 
 Health endpoint trả `200` và `{"status":"ok"}` khi process sẵn sàng. Readiness nên phản ánh dependency thiết yếu nhưng tránh biến lỗi tạm thời thành restart loop.
@@ -69,7 +76,7 @@ Traffic nội bộ không đi qua public Internet. Order gọi Product qua priva
 
 ## Storage và upload
 
-- PostgreSQL: dữ liệu giao dịch của Auth, User, Order.
+- PostgreSQL: dữ liệu giao dịch của Auth, User, Cart, Order.
 - DynamoDB: Product theo access patterns đã thiết kế.
 - S3: frontend, avatar, product images; database chỉ lưu object key.
 - CloudFront: phân phối frontend và image từ private S3 origins khi phù hợp.

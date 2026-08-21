@@ -4,7 +4,7 @@ Mỗi phase phải có đầu ra kiểm chứng được. Không tạo toàn b�
 
 ## Phase 0 — Local application
 
-Dựng Auth, Product và Order service, Dockerfile, health endpoint và Docker Compose. Kiểm tra REST API, container network và service-to-service calls.
+Dựng Auth, Product, Cart và Order service, Dockerfile, health endpoint và Docker Compose. Kiểm tra REST API, container network và service-to-service calls.
 
 ## Phase 1 — AWS network
 
@@ -24,11 +24,11 @@ Tạo ALB, listener, target group và `/health`; gọi Product API qua DNS của
 
 ## Phase 5 — Multiple services
 
-Deploy Auth, Product, Order và path-based routing. Đây là milestone public API đầu tiên.
+Deploy Auth, Product, Cart, Order và path-based routing. Đây là milestone public API đầu tiên.
 
 ## Phase 6 — Databases
 
-Tạo PostgreSQL và DynamoDB; kết nối Auth/Order với PostgreSQL, Product với DynamoDB. Xác minh backup, connectivity và data ownership.
+Tạo PostgreSQL và DynamoDB; kết nối Auth/Cart/Order với PostgreSQL, Product với DynamoDB. Xác minh backup, connectivity và data ownership.
 
 ## Phase 7 — Secrets
 
