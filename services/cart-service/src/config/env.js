@@ -1,5 +1,6 @@
 if (!process.env.JWT_ACCESS_SECRET) throw new Error("JWT_ACCESS_SECRET is required");
 if (!process.env.PRODUCT_SERVICE_URL) throw new Error("PRODUCT_SERVICE_URL is required");
+if (!process.env.INTERNAL_API_KEY) throw new Error("INTERNAL_API_KEY is required");
 
 export const env = Object.freeze({
     nodeEnv: process.env.NODE_ENV || "development",
@@ -12,6 +13,7 @@ export const env = Object.freeze({
         password: process.env.DB_PASSWORD || "cart",
     },
     jwt: { accessSecret: process.env.JWT_ACCESS_SECRET },
+    internalApiKey: process.env.INTERNAL_API_KEY,
     productService: {
         url: process.env.PRODUCT_SERVICE_URL.replace(/\/$/, ""),
         timeoutMs: Number(process.env.PRODUCT_SERVICE_TIMEOUT_MS) || 3000,
