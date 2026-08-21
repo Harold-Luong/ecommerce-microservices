@@ -122,6 +122,19 @@ export async function deleteProductById(id, actor) {
             return false;
         }
 
+        const activeReservation = await client.query(`
+            SELECT 1
+            FROM inventory_reservation_items iri
+            JOIN inventory_reservations ir ON ir.id = iri.reservation_id
+            WHERE iri.product_id = $1 AND ir.status = 'RESERVED'
+            LIMIT 1
+        `, [id]);
+        if (activeReservation.rows[0]) {
+            const error = new Error("Product has active inventory reservations");
+            error.statusCode = 409;
+            throw error;
+        }
+
         await client.query("DELETE FROM products WHERE id = $1", [id]);
         await client.query(`
             INSERT INTO audit_logs (

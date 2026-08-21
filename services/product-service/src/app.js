@@ -6,6 +6,7 @@ import { db } from "./config/database.js";
 import { swaggerSpec } from "./config/swagger.js";
 import categoryRoutes from "./routes/category.routes.js";
 import productRoutes from "./routes/product.routes.js";
+import inventoryRoutes from "./routes/inventory.routes.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error.middleware.js";
 
 export function createApp() {
@@ -37,6 +38,7 @@ export function createApp() {
 
     app.use("/api/products", productRoutes);
     app.use("/api/categories", categoryRoutes);
+    app.use("/internal/inventory", inventoryRoutes);
     app.use(notFoundHandler);
     app.use(errorHandler);
 
