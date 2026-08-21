@@ -1,0 +1,167 @@
+openapi: 3.0.3
+info:
+  title: E-commerce Cart Service
+  description: API quản lý giỏ hàng của user hiện tại.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3003
+tags:
+  - name: Health
+  - name: Cart
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Kiểm tra service và PostgreSQL
+      responses:
+        "200": { description: Service hoạt động }
+        "503": { description: Không kết nối được database }
+  /api/cart:
+    get:
+      tags: [Cart]
+      summary: Lấy giỏ hàng của user hiện tại
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Giỏ hàng cùng thông tin sản phẩm và tổng tiền tham khảo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Cart" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/ProductUnavailable" }
+        "504": { description: Product service phản hồi quá thời gian }
+    delete:
+      tags: [Cart]
+      summary: Xóa toàn bộ item trong giỏ hàng
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Giỏ hàng đã được làm trống }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/cart/items:
+    post:
+      tags: [Cart]
+      summary: Thêm sản phẩm hoặc cộng quantity nếu đã tồn tại
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddCartItem" }
+      responses:
+        "201": { description: Đã thêm item }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Không tìm thấy sản phẩm }
+        "409": { description: Quantity vượt quá stock }
+        "502": { $ref: "#/components/responses/ProductUnavailable" }
+        "504": { description: Product service phản hồi quá thời gian }
+  /api/cart/items/{productId}:
+    parameters:
+      - in: path
+        name: productId
+        required: true
+        schema: { type: integer, minimum: 1 }
+    patch:
+      tags: [Cart]
+      summary: Đặt quantity của một item
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCartItem" }
+      responses:
+        "200": { description: Đã cập nhật item }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Không tìm thấy item hoặc sản phẩm }
+        "409": { description: Quantity vượt quá stock }
+        "502": { $ref: "#/components/responses/ProductUnavailable" }
+        "504": { description: Product service phản hồi quá thời gian }
+    delete:
+      tags: [Cart]
+      summary: Xóa một item
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Đã xóa item }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Không tìm thấy item }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  responses:
+    BadRequest:
+      description: Dữ liệu không hợp lệ
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Thiếu hoặc sai access token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ProductUnavailable:
+      description: Product service không khả dụng
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    AddCartItem:
+      type: object
+      additionalProperties: false
+      required: [productId, quantity]
+      properties:
+        productId: { type: integer, minimum: 1, example: 1 }
+        quantity: { type: integer, minimum: 1, maximum: 999, example: 2 }
+    UpdateCartItem:
+      type: object
+      additionalProperties: false
+      required: [quantity]
+      properties:
+        quantity: { type: integer, minimum: 1, maximum: 999, example: 3 }
+    Product:
+      type: object
+      nullable: true
+      properties:
+        id: { type: string, example: "1" }
+        name: { type: string, example: MacBook Pro 14 }
+        price: { type: string, example: "45000000.00" }
+        stock: { type: integer, example: 10 }
+    CartItem:
+      type: object
+      properties:
+        id: { type: string, example: "1" }
+        product_id: { type: string, example: "1" }
+        quantity: { type: integer, example: 2 }
+        product: { $ref: "#/components/schemas/Product" }
+        available: { type: boolean }
+        availabilityReason:
+          type: string
+          nullable: true
+          enum: [PRODUCT_NOT_FOUND, OUT_OF_STOCK, INSUFFICIENT_STOCK]
+        subtotal: { type: string, nullable: true, example: "90000000.00" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CartSummary:
+      type: object
+      properties:
+        itemCount: { type: integer, example: 1 }
+        totalQuantity: { type: integer, example: 2 }
+        estimatedTotal: { type: string, example: "90000000.00" }
+    Cart:
+      type: object
+      properties:
+        id: { type: string, nullable: true, example: "1" }
+        user_id: { type: string, example: "42" }
+        items: { type: array, items: { $ref: "#/components/schemas/CartItem" } }
+        summary: { $ref: "#/components/schemas/CartSummary" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Error:
+      type: object
+      properties:
+        message: { type: string }

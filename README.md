@@ -2,7 +2,7 @@
 
 Dự án thực hành xây dựng và triển khai một hệ thống thương mại điện tử theo kiến trúc microservices trên AWS. Mục tiêu là hiểu cách application, container, network, database, messaging, security, monitoring, scaling và CI/CD phối hợp với nhau—not chỉ dừng ở việc API trả về `200 OK`.
 
-> Trạng thái hiện tại: repository đang ở giai đoạn thiết kế và lập kế hoạch; mã nguồn ứng dụng và hạ tầng chưa được khởi tạo.
+> Trạng thái hiện tại: Auth, Product và Cart service đã có mã nguồn; các phase còn lại tiếp tục theo roadmap.
 
 ## Phạm vi
 
@@ -11,6 +11,7 @@ Dự án thực hành xây dựng và triển khai một hệ thống thương m
 | Auth | Đăng ký, đăng nhập, refresh token, logout | ECS Fargate, PostgreSQL |
 | User | Hồ sơ, địa chỉ, avatar, preferences | ECS Fargate, PostgreSQL, S3 |
 | Product | Sản phẩm, danh mục, tồn kho, hình ảnh | ECS Fargate, DynamoDB, S3 |
+| Cart | Giỏ hàng theo người dùng | ECS Fargate, PostgreSQL |
 | Order | Tạo và tra cứu đơn hàng | ECS Fargate, PostgreSQL, SQS |
 | Payment | Xử lý payment giả lập bất đồng bộ | ECS Fargate, SQS, DLQ |
 | Notification | Nhận event và gửi thông báo | Lambda, SQS |
@@ -40,6 +41,7 @@ ecommerce-microservices/
 │   ├── auth-service/
 │   ├── user-service/
 │   ├── product-service/
+│   ├── cart-service/
 │   ├── order-service/
 │   ├── payment-service/
 │   └── notification-service/
@@ -53,7 +55,7 @@ ecommerce-microservices/
 
 ## Bắt đầu
 
-Giai đoạn đầu tiên là dựng Auth, Product và Order service, sau đó chạy local:
+Giai đoạn đầu tiên là dựng Auth, Product, Cart và Order service, sau đó chạy local:
 
 ```bash
 docker compose up --build
@@ -69,7 +71,7 @@ Lệnh này chỉ khả dụng sau khi Phase 0 hoàn tất. Không deploy đồn
 
 ## Definition of done
 
-- Deploy đủ sáu service với network và IAM hợp lý; RDS không public và secret không nằm trong source code.
+- Deploy đủ các service với network và IAM hợp lý; RDS không public và secret không nằm trong source code.
 - Route request đúng qua ALB; giao tiếp nội bộ không vòng qua Internet.
 - Payment qua SQS có retry, DLQ và idempotency; notification chạy bằng Lambda.
 - Upload image trực tiếp lên S3 bằng presigned URL; frontend được serve qua CloudFront.

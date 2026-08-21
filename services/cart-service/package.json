@@ -1,0 +1,26 @@
+{
+    "name": "cart-service",
+    "version": "1.0.0",
+    "description": "Cart service for e-commerce microservices",
+    "type": "module",
+    "main": "src/server.js",
+    "scripts": {
+        "dev": "node --env-file=.env.development --watch src/server.js",
+        "start": "node src/server.js",
+    "migrate": "node migrations/scripts/migrate.js",
+    "migrate:dev": "node --env-file=.env.development migrations/scripts/migrate.js",
+    "seed": "node migrations/scripts/seed.js",
+    "seed:dev": "node --env-file=.env.development migrations/scripts/seed.js",
+    "test": "node --env-file=.env.development --test"
+    },
+    "dependencies": {
+        "cors": "^2.8.6",
+        "express": "^5.2.1",
+        "helmet": "^8.3.0",
+        "jsonwebtoken": "^9.0.3",
+        "pg": "^8.23.0",
+        "swagger-ui-express": "^5.0.1",
+        "yaml": "^2.9.0",
+        "zod": "^4.4.3"
+    }
+}
