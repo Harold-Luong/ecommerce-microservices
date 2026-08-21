@@ -1,0 +1,248 @@
+openapi: 3.0.3
+info:
+    title: E-commerce Product Service
+    description: API quản lý danh mục và sản phẩm.
+    version: 1.0.0
+servers:
+    - url: http://localhost:3002
+tags:
+    - name: Health
+    - name: Categories
+    - name: Products
+paths:
+    /health:
+        get:
+            tags: [Health]
+            summary: Kiểm tra service và PostgreSQL
+            responses:
+                "200": { description: Service hoạt động }
+                "503": { description: Không kết nối được cơ sở dữ liệu }
+    /api/categories:
+        get:
+            tags: [Categories]
+            summary: Lấy tất cả danh mục
+            responses:
+                "200":
+                    description: Danh sách danh mục
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    data:
+                                        {
+                                            type: array,
+                                            items:
+                                                {
+                                                    $ref: "#/components/schemas/Category",
+                                                },
+                                        }
+        post:
+            tags: [Categories]
+            summary: Tạo danh mục
+            security: [{ bearerAuth: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: "#/components/schemas/CreateCategory" }
+            responses:
+                "201": { description: Đã tạo danh mục }
+                "400": { $ref: "#/components/responses/BadRequest" }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+                "403": { $ref: "#/components/responses/Forbidden" }
+                "409": { description: Slug đã tồn tại }
+    /api/products:
+        get:
+            tags: [Products]
+            summary: Lấy danh sách sản phẩm
+            parameters:
+                - {
+                      in: query,
+                      name: page,
+                      schema: { type: integer, minimum: 1, default: 1 },
+                  }
+                - {
+                      in: query,
+                      name: limit,
+                      schema:
+                          {
+                              type: integer,
+                              minimum: 1,
+                              maximum: 100,
+                              default: 20,
+                          },
+                  }
+                - {
+                      in: query,
+                      name: categoryId,
+                      schema: { type: integer, minimum: 1 },
+                  }
+                - {
+                      in: query,
+                      name: search,
+                      schema: { type: string, maxLength: 255 },
+                  }
+                - {
+                      in: query,
+                      name: minPrice,
+                      schema: { type: number, minimum: 0 },
+                  }
+                - {
+                      in: query,
+                      name: maxPrice,
+                      schema: { type: number, minimum: 0 },
+                  }
+            responses:
+                "200":
+                    description: Danh sách sản phẩm có phân trang
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    data:
+                                        {
+                                            type: array,
+                                            items:
+                                                {
+                                                    $ref: "#/components/schemas/Product",
+                                                },
+                                        }
+                                    pagination:
+                                        {
+                                            $ref: "#/components/schemas/Pagination",
+                                        }
+                "400": { $ref: "#/components/responses/BadRequest" }
+        post:
+            tags: [Products]
+            summary: Tạo sản phẩm
+            security: [{ bearerAuth: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: "#/components/schemas/CreateProduct" }
+            responses:
+                "201": { description: Đã tạo sản phẩm }
+                "400": { $ref: "#/components/responses/BadRequest" }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+                "403": { $ref: "#/components/responses/Forbidden" }
+                "404": { description: Không tìm thấy danh mục }
+    /api/products/{id}:
+        parameters:
+            - {
+                  in: path,
+                  name: id,
+                  required: true,
+                  schema: { type: integer, minimum: 1 },
+              }
+        get:
+            tags: [Products]
+            summary: Lấy chi tiết sản phẩm
+            responses:
+                "200": { description: Chi tiết sản phẩm }
+                "404": { description: Không tìm thấy sản phẩm }
+        patch:
+            tags: [Products]
+            summary: Cập nhật một phần sản phẩm
+            security: [{ bearerAuth: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: "#/components/schemas/UpdateProduct" }
+            responses:
+                "200": { description: Đã cập nhật sản phẩm }
+                "400": { $ref: "#/components/responses/BadRequest" }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+                "403": { $ref: "#/components/responses/Forbidden" }
+                "404": { description: Không tìm thấy sản phẩm hoặc danh mục }
+        delete:
+            tags: [Products]
+            summary: Xóa sản phẩm
+            security: [{ bearerAuth: [] }]
+            responses:
+                "204": { description: Đã xóa sản phẩm }
+                "401": { $ref: "#/components/responses/Unauthorized" }
+                "403": { $ref: "#/components/responses/Forbidden" }
+                "404": { description: Không tìm thấy sản phẩm }
+components:
+    securitySchemes:
+        bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    responses:
+        BadRequest:
+            description: Dữ liệu không hợp lệ
+            content:
+                application/json:
+                    schema: { $ref: "#/components/schemas/Error" }
+        Unauthorized:
+            description: Thiếu hoặc sai access token
+            content:
+                application/json:
+                    schema: { $ref: "#/components/schemas/Error" }
+        Forbidden:
+            description: Access token không có role admin
+            content:
+                application/json:
+                    schema: { $ref: "#/components/schemas/Error" }
+    schemas:
+        Category:
+            type: object
+            properties:
+                id: { type: string, example: "1" }
+                name: { type: string, example: Laptop }
+                slug: { type: string, example: laptop }
+                created_by: { type: string, nullable: true, example: "1" }
+                updated_by: { type: string, nullable: true, example: "1" }
+                created_at: { type: string, format: date-time }
+                updated_at: { type: string, format: date-time }
+        CreateCategory:
+            type: object
+            additionalProperties: false
+            required: [name, slug]
+            properties:
+                name: { type: string, minLength: 1, maxLength: 255 }
+                slug: { type: string, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+        Product:
+            type: object
+            properties:
+                id: { type: string, example: "1" }
+                category_id: { type: string, example: "1" }
+                name: { type: string, example: MacBook Pro }
+                price: { type: string, example: "45000000.00" }
+                stock: { type: integer, example: 10 }
+                created_by: { type: string, nullable: true, example: "1" }
+                updated_by: { type: string, nullable: true, example: "1" }
+                category: { $ref: "#/components/schemas/Category" }
+                created_at: { type: string, format: date-time }
+                updated_at: { type: string, format: date-time }
+        CreateProduct:
+            type: object
+            additionalProperties: false
+            required: [categoryId, name, price]
+            properties:
+                categoryId: { type: integer, minimum: 1 }
+                name: { type: string, minLength: 1, maxLength: 255 }
+                price: { type: number, minimum: 0, multipleOf: 0.01 }
+                stock: { type: integer, minimum: 0, default: 0 }
+        UpdateProduct:
+            type: object
+            additionalProperties: false
+            minProperties: 1
+            properties:
+                categoryId: { type: integer, minimum: 1 }
+                name: { type: string, minLength: 1, maxLength: 255 }
+                price: { type: number, minimum: 0, multipleOf: 0.01 }
+                stock: { type: integer, minimum: 0 }
+        Pagination:
+            type: object
+            properties:
+                page: { type: integer }
+                limit: { type: integer }
+                total: { type: integer }
+                totalPages: { type: integer }
+        Error:
+            type: object
+            properties:
+                message: { type: string }
