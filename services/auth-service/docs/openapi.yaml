@@ -270,7 +270,7 @@ components:
 
         User:
             type: object
-            required: [id, email, is_active, created_at]
+            required: [id, email, role, is_active, created_at]
             properties:
                 id:
                     type: string
@@ -280,6 +280,11 @@ components:
                     type: string
                     format: email
                     example: user@example.com
+                role:
+                    type: string
+                    enum: [user, admin]
+                    description: Tài khoản đăng ký mới luôn có role user.
+                    example: user
                 is_active:
                     type: boolean
                     example: true
@@ -298,6 +303,7 @@ components:
             properties:
                 accessToken:
                     type: string
+                    description: JWT chứa các claim sub, email và role.
                     example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
                 refreshToken:
                     type: string

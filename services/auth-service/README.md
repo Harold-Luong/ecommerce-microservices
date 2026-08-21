@@ -7,6 +7,7 @@ Service xác thực cho hệ thống e-commerce microservices. Service cung cấ
 - Đăng ký tài khoản bằng email và mật khẩu.
 - Mã hóa mật khẩu với `bcrypt` (12 salt rounds).
 - Xác thực bằng JWT access token và refresh token.
+- Phân quyền theo vai trò `user` và `admin`; role được nhúng trong access token.
 - Refresh token rotation: refresh token cũ bị thu hồi sau khi sử dụng.
 - Lưu hash của refresh token trong PostgreSQL, không lưu token nguyên bản.
 - Đăng xuất một phiên hoặc tất cả thiết bị.
@@ -55,7 +56,13 @@ Từ thư mục `services/auth-service`:
 npm install
 ```
 
-Tạo file `.env`:
+Development local dùng file `.env.development` được phép lưu trong Git. Lệnh sau tự động nạp file này:
+
+```bash
+npm run dev
+```
+
+Các giá trị development mặc định:
 
 ```env
 PORT=3001
@@ -73,19 +80,27 @@ JWT_REFRESH_SECRET=replace-with-another-long-random-secret
 JWT_REFRESH_EXPIRES_IN=30d
 ```
 
-`JWT_ACCESS_SECRET` và `JWT_REFRESH_SECRET` là bắt buộc và nên dùng hai giá trị mạnh, khác nhau. Không commit file `.env` hoặc secret thật lên Git.
+`JWT_ACCESS_SECRET` và `JWT_REFRESH_SECRET` là bắt buộc. Các giá trị trong
+`.env.development` chỉ dùng local và không được sử dụng ở môi trường thật.
+Production chạy `npm start` và nhận biến môi trường do AWS Secrets Manager inject
+qua ECS task definition; application không đọc `.env.development` trong luồng này.
 
 Chạy migration:
 
 ```bash
-npm run migrate
+npm run migrate:dev
 ```
 
-Khởi động service ở chế độ development:
+Tạo hai tài khoản mẫu cho môi trường development:
 
 ```bash
-npm run dev
+npm run seed:dev
 ```
+
+Mặc định script tạo `admin@example.com` / `admin123` với role `admin` và
+`user@example.com` / `password123` với role `user`. Có thể thay đổi bằng các biến
+`SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_USER_EMAIL` và `SEED_USER_PASSWORD`.
+Chạy lại seed sẽ cập nhật mật khẩu, role và kích hoạt lại hai tài khoản này.
 
 Hoặc chạy ở chế độ thông thường:
 
@@ -189,6 +204,7 @@ Phản hồi thành công (`201`):
   "data": {
     "id": "1",
     "email": "user@example.com",
+    "role": "user",
     "is_active": true,
     "created_at": "2026-08-20T00:00:00.000Z"
   }
