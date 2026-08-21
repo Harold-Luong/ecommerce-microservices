@@ -1,5 +1,5 @@
 import { getProduct } from "../clients/product.client.js";
-import { addItem, clearCart, deleteItem, findCartByUserId, updateItem } from "../repositories/cart.repository.js";
+import { addItem, clearCart, consumeItems, deleteItem, findCartByUserId, updateItem } from "../repositories/cart.repository.js";
 
 function error(message, statusCode) {
     const value = new Error(message);
@@ -52,4 +52,8 @@ export async function removeCartItem(userId, productId) {
 
 export function removeAllCartItems(userId) {
     return clearCart(userId);
+}
+
+export function consumeCartItems(orderId, userId, items) {
+    return consumeItems(orderId, userId, items);
 }

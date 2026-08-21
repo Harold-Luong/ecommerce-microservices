@@ -118,3 +118,57 @@ export async function clearCart(userId) {
         client.release();
     }
 }
+
+export async function consumeItems(orderId, userId, items) {
+    const client = await db.connect();
+    try {
+        await client.query("BEGIN");
+        const consumption = await client.query(`
+            INSERT INTO cart_consumptions (order_id, user_id, request_items)
+            VALUES ($1, $2, $3::jsonb)
+            ON CONFLICT (order_id) DO NOTHING
+            RETURNING order_id
+        `, [orderId, userId, JSON.stringify(items)]);
+        if (!consumption.rows[0]) {
+            const existing = await client.query(`
+                SELECT user_id, request_items = $2::jsonb AS same_items
+                FROM cart_consumptions WHERE order_id = $1
+            `, [orderId, JSON.stringify(items)]);
+            if (String(existing.rows[0].user_id) !== String(userId) || !existing.rows[0].same_items) {
+                const error = new Error("Order ID was already consumed with a different cart request");
+                error.statusCode = 409;
+                throw error;
+            }
+            await client.query("COMMIT");
+            return;
+        }
+        const cartResult = await client.query("SELECT id FROM carts WHERE user_id = $1 FOR UPDATE", [userId]);
+        const cart = cartResult.rows[0];
+        if (!cart) {
+            await client.query("COMMIT");
+            return;
+        }
+
+        for (const item of [...items].sort((a, b) => a.productId - b.productId)) {
+            const updated = await client.query(`
+                UPDATE cart_items
+                SET quantity = quantity - $3, updated_at = NOW()
+                WHERE cart_id = $1 AND product_id = $2 AND quantity > $3
+                RETURNING id
+            `, [cart.id, item.productId, item.quantity]);
+            if (!updated.rows[0]) {
+                await client.query(`
+                    DELETE FROM cart_items
+                    WHERE cart_id = $1 AND product_id = $2 AND quantity <= $3
+                `, [cart.id, item.productId, item.quantity]);
+            }
+        }
+        await client.query("UPDATE carts SET updated_at = NOW() WHERE id = $1", [cart.id]);
+        await client.query("COMMIT");
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
+}

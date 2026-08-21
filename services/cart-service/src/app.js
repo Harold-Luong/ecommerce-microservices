@@ -6,6 +6,7 @@ import { db } from "./config/database.js";
 import { swaggerSpec } from "./config/swagger.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error.middleware.js";
 import cartRoutes from "./routes/cart.routes.js";
+import internalCartRoutes from "./routes/internal-cart.routes.js";
 
 export function createApp() {
     const app = express();
@@ -24,6 +25,7 @@ export function createApp() {
     });
 
     app.use("/api/cart", cartRoutes);
+    app.use("/internal/cart", internalCartRoutes);
     app.use(notFoundHandler);
     app.use(errorHandler);
     return app;
