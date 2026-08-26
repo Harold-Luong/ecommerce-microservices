@@ -120,9 +120,7 @@ export async function refreshAccessToken(refreshToken) {
         throw error;
     }
 
-    const session = await findRefreshSessionById(
-        payload.jti,
-    );
+    const session = await findRefreshSessionById(payload.jti);
 
     if (!session) {
         const error = new Error("Refresh session not found");

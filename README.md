@@ -1,24 +1,40 @@
 # AWS E-commerce Microservices
 
-Dự án thực hành xây dựng và triển khai một hệ thống thương mại điện tử theo kiến trúc microservices trên AWS. Mục tiêu là hiểu cách application, container, network, database, messaging, security, monitoring, scaling và CI/CD phối hợp với nhau—not chỉ dừng ở việc API trả về `200 OK`.
+Dự án thực hành xây dựng và triển khai một hệ thống thương mại điện tử theo kiến trúc microservices trên AWS. Trọng tâm hiện tại là tính nhất quán của checkout khi Auth, Product, Cart và Order có database riêng; các phần AWS, Payment và Notification được triển khai theo roadmap sau khi luồng local đã được kiểm chứng.
 
-> Trạng thái hiện tại: Auth, Product và Cart service đã có mã nguồn; các phase còn lại tiếp tục theo roadmap.
+> Trạng thái hiện tại: Auth, Product, Cart và Order là Node.js/Express service đã có source code, migration, OpenAPI và Swagger UI. Chưa có Docker Compose, AWS infrastructure, Payment worker hoặc Notification Lambda.
 
 ## Phạm vi
 
-| Service | Trách nhiệm chính | Runtime / storage dự kiến |
+| Service | Port | Trách nhiệm hiện tại | Storage sở hữu |
 | --- | --- | --- |
-| Auth | Đăng ký, đăng nhập, refresh token, logout | ECS Fargate, PostgreSQL |
-| User | Hồ sơ, địa chỉ, avatar, preferences | ECS Fargate, PostgreSQL, S3 |
-| Product | Sản phẩm, danh mục, tồn kho, hình ảnh | ECS Fargate, DynamoDB, S3 |
-| Cart | Giỏ hàng theo người dùng | ECS Fargate, PostgreSQL |
-| Order | Tạo và tra cứu đơn hàng | ECS Fargate, PostgreSQL, SQS |
-| Payment | Xử lý payment giả lập bất đồng bộ | ECS Fargate, SQS, DLQ |
-| Notification | Nhận event và gửi thông báo | Lambda, SQS |
+| Auth | `3001` | Đăng ký, đăng nhập, refresh/logout, JWT và role `user`/`admin` | PostgreSQL: users, refresh sessions |
+| Product | `3002` | Categories, products, audit log và inventory reservation | PostgreSQL: categories, products, audit logs, reservations |
+| Cart | `3003` | Giỏ hàng theo user và consume item sau checkout | PostgreSQL: carts, cart items, cart consumptions |
+| Order | `3004` | Checkout Saga, order snapshot, cancel/compensation | PostgreSQL: orders, order items |
 
-Frontend dự kiến dùng Vue 3 hoặc React; backend dự kiến dùng Node.js và Express. Các lựa chọn này chưa được cố định cho đến khi mã nguồn được khởi tạo.
+User, Payment và Notification là các service dự kiến cho phase sau, chưa có source code trong repository. Frontend cũng chưa được khởi tạo.
 
-## Kiến trúc tổng quan
+## Checkout hiện tại
+
+```text
+Browser
+  │ JWT + Idempotency-Key
+  ▼
+Order service
+  ├── đọc cart bằng JWT của user
+  ├── lưu Order PENDING và cart snapshot
+  ├── reserve inventory tại Product bằng Order UUID
+  ├── lưu price/name snapshot, chuyển PENDING_PAYMENT
+  └── consume đúng quantity tại Cart bằng cùng Order UUID
+```
+
+Product là nguồn quyết định cuối cùng cho stock; Cart chỉ hiển thị dữ liệu tham khảo.
+Không có distributed transaction giữa ba database. Tính nhất quán đến từ local transaction, idempotency key, row locking, retry và compensation. Xem [Checkout consistency](docs/checkout-consistency.md) để biết flow và failure mode chi tiết.
+
+Khi chạy local, mỗi service lắng nghe trên `0.0.0.0` ở port riêng. Product và Cart chưa có network boundary tách public route với internal route: endpoint `/internal/*` vẫn có thể được gọi bởi bất kỳ client nào chạm được service port, nhưng yêu cầu `x-internal-api-key`. Không expose các port này ra Internet và không gửi key đó cho frontend.
+
+## Kiến trúc AWS mục tiêu
 
 ```text
 Browser ──► CloudFront ──► S3 (frontend)
@@ -30,53 +46,59 @@ Browser ──► CloudFront ──► S3 (frontend)
                                       └──► SQS ──► Notification Lambda
 ```
 
-ECS tasks và database hướng tới private subnets. ALB là public entry point; quyền truy cập AWS của application đến từ IAM task role, còn secret được inject khi ECS khởi chạy task. Xem [Architecture](docs/architecture.md) để biết thiết kế chi tiết.
+ECS tasks và database hướng tới private subnets. ALB là public entry point; quyền truy cập AWS của application đến từ IAM task role, còn secret được inject khi ECS khởi chạy task. Đây là mục tiêu triển khai, chưa phải infrastructure đã tồn tại. Xem [Architecture](docs/architecture.md) để biết ranh giới giữa local implementation và AWS target.
 
-## Cấu trúc repository dự kiến
+## Cấu trúc repository hiện tại và mục tiêu
 
 ```text
 ecommerce-microservices/
-├── frontend/
 ├── services/
 │   ├── auth-service/
-│   ├── user-service/
 │   ├── product-service/
 │   ├── cart-service/
 │   ├── order-service/
-│   ├── payment-service/
-│   └── notification-service/
-├── infrastructure/
 ├── docs/
-├── .github/workflows/
-└── docker-compose.yml
+└── README.md
 ```
 
-Đây là cấu trúc mục tiêu, không phải mô tả trạng thái hiện tại của repository.
+`frontend/`, `user-service/`, `payment-service/`, `notification-service/`, `infrastructure/`, `.github/workflows/` và Docker Compose là cấu trúc mục tiêu, chưa phải đầy đủ trạng thái repository hiện tại.
 
-## Bắt đầu
+## Chạy local
 
-Giai đoạn đầu tiên là dựng Auth, Product, Cart và Order service, sau đó chạy local:
+Cần một PostgreSQL instance có database/user riêng cho từng service. Làm theo hướng dẫn trong README của từng service, theo thứ tự khuyến nghị:
 
-```bash
-docker compose up --build
-```
+1. [Auth service](services/auth-service/README.md): migrate, seed rồi chạy service.
+2. [Product service](services/product-service/README.md): migrate, seed rồi chạy service.
+3. [Cart service](services/cart-service/README.md): migrate, seed rồi chạy service.
+4. [Order service](services/order-service/README.md): migrate rồi chạy service.
 
-Lệnh này chỉ khả dụng sau khi Phase 0 hoàn tất. Không deploy đồng thời toàn bộ kiến trúc; triển khai từng phase, kiểm thử và quan sát failure mode trước khi chuyển tiếp.
+Mỗi service tự nạp `.env.development` khi dùng script `*:dev`. Các file này chỉ chứa placeholder cho local và được version control có chủ đích; không được dùng làm secret production. `JWT_ACCESS_SECRET` phải giống nhau ở Auth/Product/Cart/Order; `INTERNAL_API_KEY` phải giống nhau ở Product, Cart và Order.
+
+Repository hiện chưa có `docker-compose.yml`, vì vậy không dùng `docker compose up --build` ở thời điểm này.
+
+Swagger UI sau khi service chạy:
+
+| Service | URL |
+| --- | --- |
+| Auth | `http://localhost:3001/api-docs` |
+| Product | `http://localhost:3002/api-docs` |
+| Cart | `http://localhost:3003/api-docs` |
+| Order | `http://localhost:3004/api-docs` |
 
 ## Tài liệu
 
-- [Architecture](docs/architecture.md): ranh giới service, data ownership, API và luồng request/event.
-- [Roadmap](docs/roadmap.md): thứ tự triển khai từ local đến CI/CD.
-- [Operations](docs/operations.md): security, observability, scaling, failure testing, debugging và cost control.
+- [Architecture](docs/architecture.md): ranh giới service, ownership, local implementation và AWS target.
+- [Checkout consistency](docs/checkout-consistency.md): Saga, idempotency, concurrency, compensation và recovery hiện tại.
+- [Roadmap](docs/roadmap.md): phần đã hoàn thành và thứ tự triển khai tiếp theo.
+- [Operations](docs/operations.md): runbook local hiện tại và mục tiêu vận hành AWS.
 
-## Definition of done
+## Definition of done cho giai đoạn hiện tại
 
-- Deploy đủ các service với network và IAM hợp lý; RDS không public và secret không nằm trong source code.
-- Route request đúng qua ALB; giao tiếp nội bộ không vòng qua Internet.
-- Payment qua SQS có retry, DLQ và idempotency; notification chạy bằng Lambda.
-- Upload image trực tiếp lên S3 bằng presigned URL; frontend được serve qua CloudFront.
-- Có logs, metrics, alarms, load test, failure test và CI/CD tới ECS.
-- Lần theo được một request từ browser qua network, IAM, service, storage và log liên quan.
+- Checkout cùng `Idempotency-Key` không tạo order/reservation/cart consumption trùng.
+- Nhiều checkout tranh cùng stock không làm tồn kho âm hoặc oversell.
+- Lỗi tạm thời giữ trạng thái Saga để retry; lỗi nghiệp vụ được ghi nhận rõ ràng.
+- Hủy order hoàn stock một lần và có thể retry an toàn.
+- Contract public/internal được đồng bộ trong README và OpenAPI của từng service.
 
 ## Nguyên tắc học
 
